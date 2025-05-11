@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Doom-like Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: black; }
+        canvas { width: 100%; height: 100%; }
+        #shoot-area {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 0, 0, 0.5);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+            z-index: 10;
+        }
+        #joystick {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: 100px;
+            height: 100px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 50%;
+            touch-action: none;
+            z-index: 10;
+        }
+        #joystick-knob {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 0, 255, 0.7);
+            border-radius: 50%;
+            top: 30px;
+            left: 30px;
+            transition: transform 0.1s;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 18px;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Loading...</div>
+    <div id="shoot-area">Shoot</div>
+    <div id="joystick">
+        <div id="joystick-knob"></div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" onerror="document.getElementById('status').innerText = 'Failed to load Three.js from cdnjs CDN (r128). Check network.';"></script>
+    <script>
+        window.onload = function() {
+            if (typeof THREE === 'undefined') {
+                document.getElementById("status").innerText = "Three.js is not defined. Ensure the cdnjs CDN link is correct.";
+                throw new Error("Three.js not loaded");
+            }
+
+            try {
+                console.log("Three.js loaded, version:", THREE.REVISION);
+
+                if (!THREE.WebGLRenderer) {
+                    document.getElementById("status").innerText = "WebGL is not supported on this device.";
+                    throw new Error("WebGL not supported");
+                }
+
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x333333); // Dim *Doom*-like lighting
+                const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                const renderer = new THREE.WebGLRenderer();
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                document.body.appendChild(renderer.domElement);
+
+                // Level design: Walls forming a simple rectangular room
+                const wallGeometry = new THREE.BoxGeometry(1, 5, 50); // Tall walls
+                const wallMaterial = new THREE.MeshBasicMaterial({ color: 0x666666, wireframe: false }); // Gray walls
+                const walls = [
+                    new THREE.Mesh(wallGeometry, wallMaterial.clone()).position.set(0, 2.5, -25), // Back wall
+                    new THREE.Mesh(wallGeometry, wallMaterial.clone()).position.set(0, 2.5, 25),  // Front wall
+                    new THREE.Mesh(wallGeometry, wallMaterial.clone()).rotateY(Math.PI / 2).position.set(-25, 2.5, 0), // Left wall
+                    new THREE.Mesh(wallGeometry, wallMaterial.clone()).rotateY(Math.PI / 2).position.set(25, 2.5, 0)   // Right wall
+                ];
+                walls.forEach(wall => scene.add(wall));
+
+                const floorGeometry = new THREE.PlaneGeometry(50, 50);
+                const floorMaterial = new THREE.MeshBasicMaterial({ color: 0x444444, side: THREE.DoubleSide });
+                const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+                floor.rotation.x = Math.PI / 2;
+                scene.add(floor);
+
+                const ceilingGeometry = new THREE.PlaneGeometry(50, 50);
+                const ceilingMaterial = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+                const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+                ceiling.rotation.x = -Math.PI / 2;
+                ceiling.position.y = 5;
+                scene.add(ceiling);
+
+                // Player (first-person)
+                const playerHeight = 2;
+                const playerGroup = new THREE.Group();
+                const bodyGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5); // Small indicator
+                const bodyMaterial = new THREE.MeshBasicMaterial({ color: 0xFFDAB9 });
+                const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+                body.position.y = playerHeight / 2;
+                playerGroup.add(body);
+                playerGroup.position.set(0, playerHeight / 2, 0);
+                scene.add(playerGroup);
+
+                // Enemies (Doom demons)
+                const enemies = [];
+                const enemyCount = 3;
+                const enemyGeometry = new THREE.BoxGeometry(1, 2, 1);
+                const enemyMaterial = new THREE.MeshBasicMaterial({ color: 0xFF4500 }); // Reddish demon color
+                for (let i = 0; i < enemyCount; i++) {
+                    const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial.clone());
+                    enemy.position.set(
+                        Math.random() * 40 - 20,
+                        1,
+                        Math.random() * 40 - 20
+                    );
+                    enemies.push({ mesh: enemy, alive: true });
+                    scene.add(enemy);
+                }
+
+                const projectiles = [];
+                function shootProjectile() {
+                    if (projectiles.length > 10) return;
+                    const projectileGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+                    const projectileMaterial = new THREE.MeshBasicMaterial({ color: 0xFFFF00 });
+                    const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
+                    projectile.position.copy(playerGroup.position);
+                    projectile.position.y = playerHeight;
+                    const direction = new THREE.Vector3();
+                    camera.getWorldDirection(direction);
+                    direction.y = 0;
+                    direction.normalize();
+                    projectile.userData = { direction: direction, speed: 0.8 };
+                    projectiles.push(projectile);
+                    scene.add(projectile);
+                    console.log("Projectile fired");
+                }
+
+                camera.position.set(0, playerHeight, -5);
+                camera.lookAt(playerGroup.position);
+
+                let health = 100;
+                let moveSpeed = 0.1;
+                let rotationSpeed = 0.05;
+                let joystickActive = false;
+                let joystickX = 0;
+                let joystickY = 0;
+
+                const joystick = document.getElementById("joystick");
+                const joystickKnob = document.getElementById("joystick-knob");
+                const shootArea = document.getElementById("shoot-area");
+
+                joystick.addEventListener("touchstart", (e) => {
+                    e.preventDefault();
+                    joystickActive = true;
+                    updateJoystick(e.touches[0]);
+                    console.log("Joystick touchstart");
+                });
+
+                joystick.addEventListener("touchmove", (e) => {
+                    e.preventDefault();
+                    if (joystickActive) updateJoystick(e.touches[0]);
+                });
+
+                joystick.addEventListener("touchend", (e) => {
+                    joystickActive = false;
+                    joystickX = 0;
+                    joystickY = 0;
+                    joystickKnob.style.transform = `translate(30px, 30px)`;
+                    console.log("Joystick touchend");
+                });
+
+                function updateJoystick(touch) {
+                    try {
+                        const rect = joystick.getBoundingClientRect();
+                        const centerX = rect.left + rect.width / 2;
+                        const centerY = rect.top + rect.height / 2;
+                        joystickX = (touch.clientX - centerX) / (rect.width / 2); // Left = negative, Right = positive
+                        joystickY = (touch.clientY - centerY) / (rect.height / 2) * -1; // Up = negative, Down = positive
+                        const magnitude = Math.sqrt(joystickX * joystickX + joystickY * joystickY);
+                        if (magnitude < 0.2) { // Dead zone
+                            joystickX = 0;
+                            joystickY = 0;
+                        } else {
+                            const maxMagnitude = Math.min(1, magnitude);
+                            joystickX *= maxMagnitude / magnitude;
+                            joystickY *= maxMagnitude / magnitude;
+                        }
+                        joystickX *= 0.6; // Reduced sensitivity
+                        joystickY *= 0.6; // Reduced sensitivity
+                        const maxOffset = 30;
+                        joystickKnob.style.transform = `translate(${30 + joystickX * maxOffset * 2}px, ${30 + joystickY * maxOffset * 2}px)`;
+                    } catch (error) {
+                        console.error("Joystick update error:", error);
+                    }
+                }
+
+                shootArea.addEventListener("touchstart", (e) => {
+                    e.preventDefault();
+                    shootProjectile();
+                    console.log("Shoot area touched");
+                });
+
+                // Mouse control for rotation (Doom-like)
+                let isMouseDown = false;
+                let previousMouseX = 0;
+                document.addEventListener("mousedown", (e) => { isMouseDown = true; previousMouseX = e.clientX; });
+                document.addEventListener("mouseup", () => isMouseDown = false);
+                document.addEventListener("mousemove", (e) => {
+                    if (isMouseDown) {
+                        const deltaX = e.clientX - previousMouseX;
+                        playerGroup.rotation.y -= deltaX * 0.002; // Smooth rotation
+                        previousMouseX = e.clientX;
+                    }
+                });
+
+                document.addEventListener("keydown", (event) => {
+                    if (event.code === "Space") shootProjectile();
+                    if (event.code === "ArrowUp" || event.code === "KeyW") joystickY = -0.6;
+                    if (event.code === "ArrowDown" || event.code === "KeyS") joystickY = 0.6;
+                    if (event.code === "ArrowLeft" || event.code === "KeyA") joystickX = -0.6;
+                    if (event.code === "ArrowRight" || event.code === "KeyD") joystickX = 0.6;
+                });
+
+                document.addEventListener("keyup", (event) => {
+                    if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "ArrowDown" || event.code === "KeyS") joystickY = 0;
+                    if (event.code === "ArrowLeft" || event.code === "KeyA" || event.code === "ArrowRight" || event.code === "KeyD") joystickX = 0;
+                });
+
+                function animate() {
+                    requestAnimationFrame(animate);
+
+                    try {
+                        if (joystickActive || joystickX !== 0 || joystickY !== 0) {
+                            const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), playerGroup.rotation.y);
+                            const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), playerGroup.rotation.y);
+                            const moveDirection = forward.clone().multiplyScalar(joystickY).add(right.clone().multiplyScalar(joystickX));
+                            playerGroup.position.addScaledVector(moveDirection.normalize(), moveSpeed * 10);
+
+                            playerGroup.rotation.y += joystickX * rotationSpeed * 10; // Rotate with joystick
+                            console.log("Player moved: x=", playerGroup.position.x, "z=", playerGroup.position.z, "rotation=", playerGroup.rotation.y);
+                        }
+
+                        // Keep player within level bounds
+                        playerGroup.position.x = Math.max(-24, Math.min(24, playerGroup.position.x));
+                        playerGroup.position.z = Math.max(-24, Math.min(24, playerGroup.position.z));
+
+                        camera.position.set(playerGroup.position.x, playerHeight, playerGroup.position.z - 5);
+                        camera.lookAt(playerGroup.position.x, playerHeight, playerGroup.position.z);
+
+                        enemies.forEach(enemy => {
+                            if (!enemy.alive) return;
+                            const direction = playerGroup.position.clone().sub(enemy.mesh.position);
+                            direction.y = 0;
+                            direction.normalize().multiplyScalar(0.05);
+                            enemy.mesh.position.add(direction);
+                        });
+
+                        projectiles.forEach((projectile, index) => {
+                            projectile.position.addScaledVector(projectile.userData.direction, projectile.userData.speed);
+                            if (projectile.position.distanceTo(playerGroup.position) > 50) {
+                                scene.remove(projectile);
+                                projectiles.splice(index, 1);
+                            }
+
+                            enemies.forEach(enemy => {
+                                if (!enemy.alive) return;
+                                const distance = projectile.position.distanceTo(enemy.mesh.position);
+                                if (distance < 1) {
+                                    enemy.alive = false;
+                                    scene.remove(enemy.mesh);
+                                    scene.remove(projectile);
+                                    projectiles.splice(projectiles.indexOf(projectile), 1);
+                                }
+                            });
+                        });
+
+                        enemies.forEach(enemy => {
+                            if (!enemy.alive) return;
+                            const distance = playerGroup.position.distanceTo(enemy.mesh.position);
+                            if (distance < 1) {
+                                health -= 0.5;
+                                if (health <= 0) {
+                                    alert("Game Over! Refresh to restart.");
+                                    health = 0;
+                                }
+                            }
+                        });
+
+                        const aliveEnemies = enemies.filter(e => e.alive).length;
+                        document.getElementById("status").innerText = `Health: ${Math.round(health)} | Enemies: ${aliveEnemies}`;
+                        if (aliveEnemies === 0) {
+                            alert("Level Cleared! Refresh to restart.");
+                            enemies.forEach(e => e.alive = false);
+                        }
+
+                        renderer.render(scene, camera);
+                    } catch (error) {
+                        console.error("Animate error:", error);
+                        document.getElementById("status").innerText = "Render Error: " + error.message;
+                    }
+                }
+                animate();
+
+                window.addEventListener("resize", () => {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+
+                document.getElementById("status").innerText = "Game running!";
+            } catch (error) {
+                document.getElementById("status").innerText = "Error: " + error.message;
+                console.error("Three.js Error:", error);
+            }
+        };
+    </script>
+</body>
+</html>
